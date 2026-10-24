@@ -13,17 +13,29 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from .parsing import parse_files, SUPPORTED_EXTENSIONS
+from .parsing import parse_file, parse_files, split_into_paragraphs, SUPPORTED_EXTENSIONS
+from .template import EmbeddingCache, remove_template
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s  %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# Lazy-loaded embedding cache (model loaded on first use)
+_embedding_cache: EmbeddingCache | None = None
+
+
+def get_embedding_cache() -> EmbeddingCache:
+    """Get or create the global embedding cache singleton."""
+    global _embedding_cache
+    if _embedding_cache is None:
+        _embedding_cache = EmbeddingCache()
+    return _embedding_cache
 
 app = FastAPI(
     title="Local Echo Scan",
@@ -129,7 +141,109 @@ async def parse_submissions(
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
+@app.post("/parse-with-template")
+async def parse_and_clean(
+    files: list[UploadFile] = File(..., description="Student submission files"),
+    manual: UploadFile | None = File(None, description="Optional lab manual"),
+    manual_sim_threshold: float = Form(0.85),
+    boilerplate_sim_threshold: float = Form(0.9),
+    boilerplate_freq_threshold: float = Form(0.6),
+) -> JSONResponse:
+    """Parse submissions and remove template/boilerplate text.
+
+    Accepts student files plus an optional lab manual. Returns cleaned
+    paragraphs per student along with what was removed and why.
+    """
+    if not files:
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No files provided."},
+        )
+
+    tmp_dir = tempfile.mkdtemp(prefix="les_")
+    try:
+        saved_files = _save_uploads(files, tmp_dir)
+        if not saved_files:
+            return JSONResponse(
+                status_code=400,
+                content={"error": "No supported files found."},
+            )
+
+        submissions = parse_files(saved_files)
+
+        # Parse lab manual if provided
+        manual_paragraphs = None
+        if manual and manual.filename:
+            manual_path = os.path.join(tmp_dir, f"_manual_{manual.filename}")
+            with open(manual_path, "wb") as f:
+                shutil.copyfileobj(manual.file, f)
+            manual_sub = parse_file(manual_path, manual.filename)
+            if not manual_sub.error:
+                manual_paragraphs = manual_sub.paragraphs
+                logger.info(
+                    "Lab manual: %d paragraphs", len(manual_paragraphs)
+                )
+
+        # Run template removal
+        cache = get_embedding_cache()
+        result = remove_template(
+            submissions=submissions,
+            cache=cache,
+            manual_paragraphs=manual_paragraphs,
+            manual_sim_threshold=manual_sim_threshold,
+            boilerplate_sim_threshold=boilerplate_sim_threshold,
+            boilerplate_freq_threshold=boilerplate_freq_threshold,
+        )
+
+        # Build response
+        cleaned_results = []
+        for sub in result.cleaned_submissions:
+            cleaned_results.append({
+                "name": sub.name,
+                "filename": sub.filename,
+                "paragraph_count": len(sub.paragraphs),
+                "paragraphs": [
+                    {"text": p.text, "index": p.index}
+                    for p in sub.paragraphs
+                ],
+                "error": sub.error,
+            })
+
+        removed_info = [
+            {
+                "text": rp.text[:120] + ("…" if len(rp.text) > 120 else ""),
+                "reason": rp.reason,
+                "student": rp.source_student,
+            }
+            for rp in result.removed_paragraphs
+        ]
+
+        total_cleaned = sum(
+            len(s.paragraphs) for s in result.cleaned_submissions
+        )
+
+        return JSONResponse(content={
+            "submissions": cleaned_results,
+            "template_removal": {
+                "removed_count": result.removed_count,
+                "boilerplate_detected": len(result.boilerplate_texts),
+                "removed_paragraphs": removed_info,
+            },
+            "summary": {
+                "total_files": len(submissions),
+                "total_paragraphs_after_cleaning": total_cleaned,
+                "files_with_errors": [
+                    s.filename for s in submissions if s.error
+                ],
+            },
+        })
+
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
 @app.get("/health")
 async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok", "service": "Local Echo Scan"}
+
