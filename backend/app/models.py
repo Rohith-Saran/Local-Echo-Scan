@@ -44,6 +44,10 @@ class FlaggedPair:
     label: str | None = None  # Gemma label
     reason: str | None = None  # Gemma explanation
 
+    @property
+    def match_count(self) -> int:
+        return len(self.matched_pairs)
+
 
 @dataclass
 class CopyRing:
