@@ -13,6 +13,8 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from typing import Optional, List, Dict, Any
+
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -20,6 +22,7 @@ from fastapi.responses import JSONResponse
 from .parsing import parse_file, parse_files, split_into_paragraphs, SUPPORTED_EXTENSIONS
 from .template import EmbeddingCache, remove_template
 from .similarity import compute_pairwise_similarity
+from .explain import explain_flagged_pairs
 
 logging.basicConfig(
     level=logging.INFO,
@@ -144,8 +147,8 @@ async def parse_submissions(
 
 @app.post("/parse-with-template")
 async def parse_and_clean(
-    files: list[UploadFile] = File(..., description="Student submission files"),
-    manual: UploadFile | None = File(None, description="Optional lab manual"),
+    files: List[UploadFile] = File(..., description="Student submission files"),
+    manual: Optional[UploadFile] = File(None, description="Optional lab manual"),
     manual_sim_threshold: float = Form(0.85),
     boilerplate_sim_threshold: float = Form(0.9),
     boilerplate_freq_threshold: float = Form(0.6),
@@ -245,19 +248,21 @@ async def parse_and_clean(
 
 @app.post("/analyze")
 async def analyze(
-    files: list[UploadFile] = File(..., description="Student submission files"),
-    manual: UploadFile | None = File(None, description="Optional lab manual"),
+    files: List[UploadFile] = File(..., description="Student submission files"),
+    manual: Optional[UploadFile] = File(None, description="Optional lab manual"),
     threshold: float = Form(0.85, description="Flag threshold for pair score"),
     match_threshold: float = Form(0.80, description="Min similarity for a paragraph match"),
     manual_sim_threshold: float = Form(0.85),
     boilerplate_sim_threshold: float = Form(0.9),
     boilerplate_freq_threshold: float = Form(0.6),
+    explain: bool = Form(False, description="Run Gemma explanations for flagged pairs"),
+    explain_top_n: int = Form(10, description="Max flagged pairs to explain"),
 ) -> JSONResponse:
-    """Full analysis pipeline: parse → template removal → similarity.
+    """Full analysis pipeline: parse → template removal → similarity → explanations.
 
     Accepts student files and an optional lab manual, runs all processing
-    steps, and returns flagged pairs with scores, matching passages, and
-    template removal info.
+    steps, and returns flagged pairs with scores, matching passages,
+    template removal info, and optional Gemma explanations.
     """
     if not files:
         return JSONResponse(
@@ -308,6 +313,14 @@ async def analyze(
             match_threshold=match_threshold,
             flag_threshold=threshold,
         )
+
+        # --- Step 4: Gemma explanations ---
+        explanations_available = False
+        if explain and flagged_pairs:
+            flagged_pairs, explanations_available = explain_flagged_pairs(
+                flagged_pairs=flagged_pairs,
+                top_n=explain_top_n,
+            )
 
         # --- Build response ---
         flagged_response = []
@@ -360,6 +373,7 @@ async def analyze(
         return JSONResponse(content={
             "flagged_pairs": flagged_response,
             "submissions": submission_summaries,
+            "explanations_available": explanations_available,
             "template_removal": {
                 "removed_count": template_result.removed_count,
                 "boilerplate_detected": len(
@@ -371,6 +385,7 @@ async def analyze(
                 "total_files": len(submissions),
                 "total_paragraphs_after_cleaning": total_cleaned,
                 "flagged_pair_count": len(flagged_pairs),
+                "explanations_available": explanations_available,
                 "files_with_errors": [
                     s.filename for s in submissions if s.error
                 ],
