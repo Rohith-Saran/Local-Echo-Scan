@@ -23,6 +23,7 @@ from .parsing import parse_file, parse_files, split_into_paragraphs, SUPPORTED_E
 from .template import EmbeddingCache, remove_template
 from .similarity import compute_pairwise_similarity
 from .explain import explain_flagged_pairs
+from .rings import find_copy_rings
 
 logging.basicConfig(
     level=logging.INFO,
@@ -257,12 +258,13 @@ async def analyze(
     boilerplate_freq_threshold: float = Form(0.6),
     explain: bool = Form(False, description="Run Gemma explanations for flagged pairs"),
     explain_top_n: int = Form(10, description="Max flagged pairs to explain"),
+    min_ring_size: int = Form(3, description="Minimum students to form a copy ring"),
 ) -> JSONResponse:
-    """Full analysis pipeline: parse → template removal → similarity → explanations.
+    """Full analysis pipeline: parse → template removal → similarity → explanations → rings.
 
     Accepts student files and an optional lab manual, runs all processing
     steps, and returns flagged pairs with scores, matching passages,
-    template removal info, and optional Gemma explanations.
+    template removal info, optional Gemma explanations, and detected copy rings.
     """
     if not files:
         return JSONResponse(
@@ -322,6 +324,13 @@ async def analyze(
                 top_n=explain_top_n,
             )
 
+        # --- Step 5: Copy rings ---
+        copy_rings = find_copy_rings(
+            flagged_pairs=flagged_pairs,
+            min_ring_size=min_ring_size,
+            explanations_available=explanations_available,
+        )
+
         # --- Build response ---
         flagged_response = []
         for fp in flagged_pairs:
@@ -341,6 +350,17 @@ async def analyze(
                     for mp in fp.matched_pairs
                 ],
             })
+
+        copy_rings_response = [
+            {
+                "members": cr.members,
+                "size": cr.size,
+                "pair_count": cr.pair_count,
+                "average_score": cr.average_score,
+                "description": cr.description,
+            }
+            for cr in copy_rings
+        ]
 
         # Submission summaries
         submission_summaries = []
@@ -372,6 +392,7 @@ async def analyze(
 
         return JSONResponse(content={
             "flagged_pairs": flagged_response,
+            "copy_rings": copy_rings_response,
             "submissions": submission_summaries,
             "explanations_available": explanations_available,
             "template_removal": {
@@ -385,6 +406,7 @@ async def analyze(
                 "total_files": len(submissions),
                 "total_paragraphs_after_cleaning": total_cleaned,
                 "flagged_pair_count": len(flagged_pairs),
+                "copy_ring_count": len(copy_rings),
                 "explanations_available": explanations_available,
                 "files_with_errors": [
                     s.filename for s in submissions if s.error

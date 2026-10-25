@@ -51,7 +51,10 @@ class FlaggedPair:
 
 @dataclass
 class CopyRing:
-    """A connected component of students sharing similar content."""
+    """A connected component of students sharing highly similar content."""
 
     members: list[str] = field(default_factory=list)
     size: int = 0
+    pair_count: int = 0
+    average_score: float = 0.0
+    description: str = "Group of students with highly similar content"
