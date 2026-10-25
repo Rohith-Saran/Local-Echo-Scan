@@ -1,6 +1,5 @@
 # Local Echo Scan
 
-[![Hacktoberfest](https://img.shields.io/badge/Hacktoberfest-2026-ff7a00?style=for-the-badge&logo=hacktoberfest&logoColor=white)](https://hacktoberfest.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![100% Local](https://img.shields.io/badge/Privacy-100%25%20Local-00e5ff?style=for-the-badge)](README.md)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
@@ -9,8 +8,6 @@
 > **A local-first, privacy-preserving semantic similarity and collusion detection engine.**
 >
 > *Process academic submissions, technical reports, and structured assignments 100% offline — zero data egress, zero cloud dependencies.*
->
-> 🎃 **Done for Hacktoberfest** — Built for open-source academic tools, air-gapped AI workflows, and student data sovereignty.
 
 ---
 
@@ -248,17 +245,6 @@ python3 backend/tests/test_rings.py
 | **Document Parsers** | [pypdf](https://pypdf.readthedocs.io/) & [python-docx](https://python-docx.readthedocs.io/) | Multi-format text extraction |
 | **Frontend** | [React](https://react.dev/) & [Vite](https://vitejs.dev/) | Reactive dashboard |
 | **3D Graphics** | [Three.js](https://threejs.org/) | WebGL spatial holographic submission radar |
-
----
-
-## 🎃 Hacktoberfest
-
-This project is open-source and created as a contribution for **Hacktoberfest**!
-
-- **Focus**: Local-first AI, student privacy, and open academic software.
-- **Contributions**: Pull requests for additional file extractors (e.g., `.ipynb`, Markdown), UI enhancements, or embedding model optimizations are warmly welcomed!
-
----
 
 ## License
 
