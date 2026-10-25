@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import './App.css';
+import Echo3DVisualizer from './components/Echo3DVisualizer';
 
 const API_BASE = 'http://localhost:8000';
 
@@ -12,15 +13,67 @@ function App() {
   const [minRingSize, setMinRingSize] = useState(3);
   
   const [loading, setLoading] = useState(false);
+  const [explainingLoading, setExplainingLoading] = useState(false);
   const [error, setError] = useState(null);
   const [results, setResults] = useState(null);
   
   const [selectedPair, setSelectedPair] = useState(null);
   const [studentFilter, setStudentFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('all');
   const [showTemplateDetails, setShowTemplateDetails] = useState(false);
 
   const fileInputRef = useRef(null);
   const manualInputRef = useRef(null);
+
+  const handleToggleExplain = async (newVal) => {
+    setExplain(newVal);
+
+    // If user turned Gemma ON and results exist but don't have explanations yet
+    if (newVal && results && results.flagged_pairs && results.flagged_pairs.length > 0) {
+      const needsExplanation = results.flagged_pairs.some((p) => !p.label);
+      if (needsExplanation) {
+        setExplainingLoading(true);
+        try {
+          const res = await fetch(`${API_BASE}/explain-pairs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              pairs: results.flagged_pairs.map((p) => ({
+                student_a: p.student_a,
+                student_b: p.student_b,
+                score: p.score,
+                matched_passages: p.matched_passages || [],
+              })),
+              top_n: 10,
+            }),
+          });
+          if (res.ok) {
+            const data = await res.json();
+            setResults((prev) => {
+              if (!prev) return prev;
+              const updated = prev.flagged_pairs.map((p, idx) => {
+                const match = data.flagged_pairs?.[idx];
+                return {
+                  ...p,
+                  label: match?.label || p.label,
+                  reason: match?.reason || p.reason,
+                };
+              });
+              return {
+                ...prev,
+                flagged_pairs: updated,
+                explanations_available: data.explanations_available,
+              };
+            });
+          }
+        } catch (e) {
+          console.error('Failed to fetch Gemma explanations:', e);
+        } finally {
+          setExplainingLoading(false);
+        }
+      }
+    }
+  };
 
   // Close modal on Escape key
   useEffect(() => {
@@ -99,8 +152,46 @@ function App() {
     }
   };
 
+  const runSampleAnalysis = async () => {
+    setLoading(true);
+    setError(null);
+    const formData = new FormData();
+    formData.append('threshold', flagThreshold.toString());
+    formData.append('match_threshold', matchThreshold.toString());
+    formData.append('explain', explain.toString());
+    formData.append('min_ring_size', minRingSize.toString());
+
+    try {
+      const res = await fetch(`${API_BASE}/analyze-sample`, {
+        method: 'POST',
+        body: formData,
+      });
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.detail || errData.error || `Server returned ${res.status}`);
+      }
+
+      const data = await res.json();
+      setResults(data);
+    } catch (err) {
+      console.error('Sample analysis failed:', err);
+      setError(err.message || 'Failed to run sample analysis. Ensure backend is running.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const copyCount = results?.flagged_pairs?.filter((p) => p.label === 'likely copy').length || 0;
+  const paraphraseCount = results?.flagged_pairs?.filter((p) => p.label === 'paraphrase').length || 0;
+  const sharedCount = results?.flagged_pairs?.filter((p) => p.label === 'shared source').length || 0;
+  const coincidenceCount = results?.flagged_pairs?.filter((p) => p.label === 'coincidence').length || 0;
+
   // Filter flagged pairs
   const filteredPairs = results?.flagged_pairs?.filter((pair) => {
+    if (explain && categoryFilter !== 'all' && pair.label !== categoryFilter) {
+      return false;
+    }
     if (!studentFilter.trim()) return true;
     const q = studentFilter.toLowerCase();
     return (
@@ -342,14 +433,21 @@ function App() {
 
           <div className="toggle-group">
             <div className="toggle-label-wrap">
-              <span className="toggle-title">Explain with Gemma</span>
-              <span className="toggle-desc">Local Ollama explanations</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span className="toggle-title">Explain with Gemma</span>
+                <span className={`toggle-status-pill ${explain ? 'active' : 'inactive'}`}>
+                  {explain ? (explainingLoading ? '● Analyzing...' : '● ON') : '○ OFF'}
+                </span>
+              </div>
+              <span className="toggle-desc">
+                {explain ? 'Gemma 3 categorizes similarities (Ollama)' : 'Disabled: semantic similarity only'}
+              </span>
             </div>
             <label className="switch">
               <input 
                 type="checkbox" 
                 checked={explain} 
-                onChange={(e) => setExplain(e.target.checked)}
+                onChange={(e) => handleToggleExplain(e.target.checked)}
               />
               <span className="slider-round"></span>
             </label>
@@ -358,9 +456,21 @@ function App() {
 
         {/* Action Row */}
         <div className="action-row">
-          <span style={{ fontSize: '0.875rem', color: 'var(--text-muted)' }}>
-            {files.length} file{files.length === 1 ? '' : 's'} selected
-          </span>
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button 
+              type="button"
+              className="sample-data-btn"
+              onClick={runSampleAnalysis}
+              disabled={loading}
+              title="Quickly test with the 15 pre-generated Ohm's Law student records"
+            >
+              ⚡ Instant 15-Student Ohm's Law Demo
+            </button>
+            <span style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
+              {files.length} file{files.length === 1 ? '' : 's'} selected
+            </span>
+          </div>
+
           <button 
             className="analyze-btn" 
             onClick={runAnalysis}
@@ -381,11 +491,19 @@ function App() {
         </div>
       </section>
 
+      {/* Interactive 3D Spatial Holographic Echo Model */}
+      <Echo3DVisualizer 
+        results={results} 
+        selectedPair={selectedPair} 
+        onSelectPair={setSelectedPair} 
+        explain={explain}
+      />
+
       {/* Results View */}
       {results && (
         <>
           {/* Offline Notice if applicable */}
-          {explain && results.explanations_available === false && (
+          {explain && results.flagged_pairs && results.flagged_pairs.length > 0 && results.explanations_available === false && (
             <div className="offline-notice">
               <span>⚡</span>
               <div>
@@ -456,9 +574,20 @@ function App() {
           {/* Flagged Pairs Section */}
           <section className="pairs-section">
             <div className="pairs-header-row">
-              <h2 className="section-title">
-                Flagged Student Pairs ({filteredPairs.length})
-              </h2>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <h2 className="section-title" style={{ margin: 0 }}>
+                  Flagged Student Pairs ({filteredPairs.length})
+                </h2>
+                {explain ? (
+                  <span className="status-pill-gemma">
+                    ✨ Gemma 3 Explanations Active
+                  </span>
+                ) : (
+                  <span className="status-pill-muted">
+                    ⚡ Semantic Mode (Gemma Off)
+                  </span>
+                )}
+              </div>
               <input 
                 type="text" 
                 placeholder="Filter by student name..."
@@ -468,12 +597,88 @@ function App() {
               />
             </div>
 
+            {/* Gemma 3 Neural Analysis Dashboard (When Gemma is ON) */}
+            {explain && results && results.flagged_pairs && results.flagged_pairs.length > 0 && (
+              <div className="gemma-ai-dashboard">
+                <div className="gemma-dashboard-header">
+                  <div className="gemma-dashboard-title">
+                    <span className="gemma-pulse-orb"></span>
+                    <div>
+                      <h3>Gemma 3 Neural Classification Matrix</h3>
+                      <p>Local Ollama model evaluated and categorized {results.flagged_pairs.length} flagged pairs</p>
+                    </div>
+                  </div>
+                  <div className="gemma-model-badge">
+                    <span>⚡ Ollama: gemma3</span>
+                    <span className="gemma-latency-tag">Air-gapped Inference</span>
+                  </div>
+                </div>
+
+                {/* Interactive Filter Pills */}
+                <div className="gemma-filter-bar">
+                  <button 
+                    type="button"
+                    className={`gemma-filter-pill ${categoryFilter === 'all' ? 'active' : ''}`}
+                    onClick={() => setCategoryFilter('all')}
+                  >
+                    All Pairs ({results.flagged_pairs.length})
+                  </button>
+                  <button 
+                    type="button"
+                    className={`gemma-filter-pill copy ${categoryFilter === 'likely copy' ? 'active' : ''}`}
+                    onClick={() => setCategoryFilter('likely copy')}
+                    disabled={copyCount === 0}
+                  >
+                    🚨 Likely Copy ({copyCount})
+                  </button>
+                  <button 
+                    type="button"
+                    className={`gemma-filter-pill paraphrase ${categoryFilter === 'paraphrase' ? 'active' : ''}`}
+                    onClick={() => setCategoryFilter('paraphrase')}
+                    disabled={paraphraseCount === 0}
+                  >
+                    🔄 Paraphrased ({paraphraseCount})
+                  </button>
+                  {sharedCount > 0 && (
+                    <button 
+                      type="button"
+                      className={`gemma-filter-pill shared ${categoryFilter === 'shared source' ? 'active' : ''}`}
+                      onClick={() => setCategoryFilter('shared source')}
+                    >
+                      📖 Shared Source ({sharedCount})
+                    </button>
+                  )}
+                  {coincidenceCount > 0 && (
+                    <button 
+                      type="button"
+                      className={`gemma-filter-pill coincidence ${categoryFilter === 'coincidence' ? 'active' : ''}`}
+                      onClick={() => setCategoryFilter('coincidence')}
+                    >
+                      ⚪ Coincidence ({coincidenceCount})
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Semantic Mode Banner (When Gemma is OFF) */}
+            {!explain && results && results.flagged_pairs && results.flagged_pairs.length > 0 && (
+              <div className="semantic-mode-banner">
+                <div className="semantic-banner-icon">⚡</div>
+                <div>
+                  <strong>High-Speed Semantic Mode:</strong> Pairs are ranked strictly by vector cosine distance (`all-MiniLM-L6-v2`). Turn on "Explain with Gemma" for AI classification and pattern analysis.
+                </div>
+              </div>
+            )}
+
             {filteredPairs.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-state-icon">✓</div>
-                <div className="empty-state-title">No similar pairs found</div>
+                <div className="empty-state-title">No matching student pairs</div>
                 <div className="empty-state-desc">
-                  {studentFilter ? 'No flagged pairs match the filter criteria.' : 'All student submissions appear independent based on the selected thresholds.'}
+                  {studentFilter || categoryFilter !== 'all' 
+                    ? 'No flagged pairs match the selected category or search filters.' 
+                    : 'All student submissions appear independent based on the selected thresholds.'}
                 </div>
               </div>
             ) : (
@@ -481,11 +686,12 @@ function App() {
                 {filteredPairs.map((pair, pIdx) => {
                   const scorePct = (pair.score * 100).toFixed(1);
                   const firstMatch = pair.matched_passages?.[0];
+                  const labelClass = getLabelClass(pair.label);
 
                   return (
                     <div 
                       key={pIdx} 
-                      className="pair-card"
+                      className={`pair-card ${explain && pair.label ? `accent-${labelClass}` : ''}`}
                       onClick={() => setSelectedPair(pair)}
                     >
                       <div className="pair-card-top">
@@ -501,17 +707,39 @@ function App() {
                           <span className="match-count-badge">
                             {pair.match_count} passage{pair.match_count === 1 ? '' : 's'}
                           </span>
-                          {pair.label && (
-                            <span className={`gemma-badge ${getLabelClass(pair.label)}`}>
+                          {explain && pair.label && (
+                            <span className={`gemma-badge ${labelClass}`}>
                               {pair.label}
+                            </span>
+                          )}
+                          {explain && explainingLoading && !pair.label && (
+                            <span className="gemma-badge loading">
+                              ✨ Gemma analyzing...
                             </span>
                           )}
                         </div>
                       </div>
 
-                      {pair.reason && (
-                        <div className="pair-reason">
-                          "{pair.reason}"
+                      {/* Gemma AI Insight Block */}
+                      {explain && pair.label && (
+                        <div className={`gemma-card-insight ${labelClass}`}>
+                          <div className="gemma-insight-badge-row">
+                            <span className="gemma-ai-chip">🤖 Gemma 3 Neural Verdict</span>
+                            <span className="gemma-pattern-name">
+                              {pair.label === 'likely copy' ? 'Direct Duplication Pattern' : pair.label === 'paraphrase' ? 'Reworded Content Pattern' : 'Shared Structure Pattern'}
+                            </span>
+                          </div>
+                          {pair.reason && (
+                            <div className="gemma-insight-quote">
+                              "{pair.reason}"
+                            </div>
+                          )}
+                          <div className="gemma-guidance-pill">
+                            💡 <strong>Instructor Action: </strong>
+                            {pair.label === 'likely copy'
+                              ? 'Examine numerical observations and calculated standard errors for identical figures.'
+                              : 'Conceptual and numerical alignment with rephrased terminology.'}
+                          </div>
                         </div>
                       )}
 
@@ -590,22 +818,46 @@ function App() {
             </div>
 
             <div className="modal-subinfo">
-              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
                 <span className={`score-badge ${getScoreBadgeClass(selectedPair.score)}`}>
                   {(selectedPair.score * 100).toFixed(1)}% Composite Score
                 </span>
-                {selectedPair.label && (
-                  <span className={`gemma-badge ${getLabelClass(selectedPair.label)}`}>
-                    {selectedPair.label}
-                  </span>
-                )}
                 <span className="match-count-badge">
                   {selectedPair.matched_passages?.length || 0} matching passages
                 </span>
+                {!explain && (
+                  <span className="status-pill-muted" style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem' }}>
+                    ⚡ Semantic Mode
+                  </span>
+                )}
               </div>
-              {selectedPair.reason && (
-                <div className="modal-reason">
-                  "{selectedPair.reason}"
+
+              {/* Enhanced Gemma AI Deepdive Brief */}
+              {explain && selectedPair.label && (
+                <div className={`modal-ai-deepdive ${getLabelClass(selectedPair.label)}`}>
+                  <div className="modal-ai-deepdive-head">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <span style={{ fontSize: '1.1rem' }}>🤖</span>
+                      <strong>Gemma 3 Neural Evidence Brief</strong>
+                    </div>
+                    <span className={`gemma-badge ${getLabelClass(selectedPair.label)}`}>
+                      {selectedPair.label}
+                    </span>
+                  </div>
+                  {selectedPair.reason && (
+                    <div className="modal-ai-deepdive-reason">
+                      "{selectedPair.reason}"
+                    </div>
+                  )}
+                  <div className="modal-ai-deepdive-guidance">
+                    ⚖️ <strong>Instructor Evaluation Advice: </strong> {
+                      selectedPair.label === 'likely copy'
+                        ? 'Direct duplication detected in experimental calculations or conclusions. High likelihood of shared origin.'
+                        : selectedPair.label === 'paraphrase'
+                        ? 'Lexical variation detected with consistent numerical and structural alignment. Compare calculation steps.'
+                        : 'Passages resemble textbook definitions or common apparatus specifications.'
+                    }
+                  </div>
                 </div>
               )}
             </div>

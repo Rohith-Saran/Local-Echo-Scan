@@ -18,6 +18,7 @@ from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from .parsing import parse_file, parse_files, split_into_paragraphs, SUPPORTED_EXTENSIONS
 from .template import EmbeddingCache, remove_template
@@ -318,7 +319,7 @@ async def analyze(
         )
 
         # --- Step 4: Gemma explanations ---
-        explanations_available = False
+        explanations_available = True
         if explain and flagged_pairs:
             flagged_pairs, explanations_available = explain_flagged_pairs(
                 flagged_pairs=flagged_pairs,
@@ -417,6 +418,215 @@ async def analyze(
 
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+@app.post("/analyze-sample")
+async def analyze_sample(
+    threshold: float = Form(0.85),
+    match_threshold: float = Form(0.80),
+    explain: bool = Form(True),
+    min_ring_size: int = Form(3),
+) -> JSONResponse:
+    """Run full analysis directly on the pre-generated sample dataset."""
+    sample_dir = os.path.join(
+        os.path.dirname(__file__), "..", "..", "sample_data", "output"
+    )
+    if not os.path.exists(sample_dir):
+        from sample_data.generate import generate_sample_dataset
+        generate_sample_dataset()
+
+    sample_files = [
+        (os.path.join(sample_dir, f), f)
+        for f in sorted(os.listdir(sample_dir))
+        if os.path.isfile(os.path.join(sample_dir, f))
+        and f != "lab_manual.txt"
+        and not f.startswith(".")
+    ]
+
+    manual_path = os.path.join(sample_dir, "lab_manual.txt")
+    manual_paragraphs = None
+    if os.path.exists(manual_path):
+        m_sub = parse_file(manual_path, "lab_manual.txt")
+        if not m_sub.error:
+            manual_paragraphs = m_sub.paragraphs
+
+    submissions = parse_files(sample_files)
+    cache = get_embedding_cache()
+    template_result = remove_template(
+        submissions=submissions,
+        cache=cache,
+        manual_paragraphs=manual_paragraphs,
+    )
+
+    flagged_pairs = compute_pairwise_similarity(
+        submissions=template_result.cleaned_submissions,
+        cache=cache,
+        match_threshold=match_threshold,
+        flag_threshold=threshold,
+    )
+
+    explanations_available = True
+    if explain and flagged_pairs:
+        flagged_pairs, explanations_available = explain_flagged_pairs(
+            flagged_pairs=flagged_pairs,
+            top_n=10,
+        )
+
+    copy_rings = find_copy_rings(
+        flagged_pairs=flagged_pairs,
+        min_ring_size=min_ring_size,
+        explanations_available=explanations_available,
+    )
+
+    flagged_response = [
+        {
+            "student_a": fp.student_a,
+            "student_b": fp.student_b,
+            "score": fp.score,
+            "match_count": len(fp.matched_pairs),
+            "label": fp.label,
+            "reason": fp.reason,
+            "matched_passages": [
+                {
+                    "text_a": mp.student_a_paragraph.text,
+                    "text_b": mp.student_b_paragraph.text,
+                    "similarity": mp.similarity,
+                }
+                for mp in fp.matched_pairs
+            ],
+        }
+        for fp in flagged_pairs
+    ]
+
+    copy_rings_response = [
+        {
+            "members": cr.members,
+            "size": cr.size,
+            "pair_count": cr.pair_count,
+            "average_score": cr.average_score,
+            "description": cr.description,
+        }
+        for cr in copy_rings
+    ]
+
+    submission_summaries = [
+        {
+            "name": sub.name,
+            "filename": sub.filename,
+            "paragraph_count": len(sub.paragraphs),
+            "paragraphs": [
+                {"text": p.text, "index": p.index}
+                for p in sub.paragraphs
+            ],
+            "error": sub.error,
+        }
+        for sub in template_result.cleaned_submissions
+    ]
+
+    removed_info = [
+        {
+            "text": rp.text[:120] + ("\u2026" if len(rp.text) > 120 else ""),
+            "reason": rp.reason,
+            "student": rp.source_student,
+        }
+        for rp in template_result.removed_paragraphs
+    ]
+
+    total_cleaned = sum(
+        len(s.paragraphs)
+        for s in template_result.cleaned_submissions
+    )
+
+    return JSONResponse(content={
+        "flagged_pairs": flagged_response,
+        "copy_rings": copy_rings_response,
+        "submissions": submission_summaries,
+        "explanations_available": explanations_available,
+        "template_removal": {
+            "removed_count": template_result.removed_count,
+            "boilerplate_detected": len(template_result.boilerplate_texts),
+            "removed_paragraphs": removed_info,
+        },
+        "summary": {
+            "total_files": len(submissions),
+            "total_paragraphs_after_cleaning": total_cleaned,
+            "flagged_pair_count": len(flagged_pairs),
+            "copy_ring_count": len(copy_rings),
+            "explanations_available": explanations_available,
+            "files_with_errors": [
+                s.filename for s in submissions if s.error
+            ],
+        },
+    })
+
+
+class ExplainMatchedPassage(BaseModel):
+    text_a: str
+    text_b: str
+    similarity: float = 1.0
+
+
+class ExplainPairItem(BaseModel):
+    student_a: str
+    student_b: str
+    score: float
+    matched_passages: list[ExplainMatchedPassage] = []
+
+
+class ExplainPairsRequest(BaseModel):
+    pairs: list[ExplainPairItem]
+    top_n: int = 10
+
+
+@app.post("/explain-pairs")
+async def explain_pairs_endpoint(req: ExplainPairsRequest) -> JSONResponse:
+    """Generate Gemma explanations on-the-fly for already flagged pairs."""
+    from .models import FlaggedPair, MatchedPair, Paragraph
+
+    flagged_pairs = []
+    for p in req.pairs:
+        matched = []
+        for idx, mp in enumerate(p.matched_passages):
+            matched.append(
+                MatchedPair(
+                    student_a_paragraph=Paragraph(text=mp.text_a, index=idx),
+                    student_b_paragraph=Paragraph(text=mp.text_b, index=idx),
+                    similarity=mp.similarity,
+                )
+            )
+        flagged_pairs.append(
+            FlaggedPair(
+                student_a=p.student_a,
+                student_b=p.student_b,
+                score=p.score,
+                matched_pairs=matched,
+            )
+        )
+
+    explained, available = explain_flagged_pairs(flagged_pairs, top_n=req.top_n)
+
+    result_pairs = []
+    for orig, exp in zip(req.pairs, explained):
+        result_pairs.append({
+            "student_a": orig.student_a,
+            "student_b": orig.student_b,
+            "score": orig.score,
+            "label": exp.label,
+            "reason": exp.reason,
+            "matched_passages": [
+                {
+                    "text_a": mp.text_a,
+                    "text_b": mp.text_b,
+                    "similarity": mp.similarity,
+                }
+                for mp in orig.matched_passages
+            ],
+        })
+
+    return JSONResponse(content={
+        "flagged_pairs": result_pairs,
+        "explanations_available": available,
+    })
 
 
 @app.get("/health")

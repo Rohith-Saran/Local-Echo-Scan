@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 
 from pypdf import PdfReader
@@ -86,9 +87,9 @@ def extract_text(file_path: str) -> str:
 def split_into_paragraphs(text: str) -> list[Paragraph]:
     """Split text into paragraphs, filtering out very short ones.
 
-    Splits on double newlines (or more). Each paragraph is stripped
-    of excess whitespace. Paragraphs shorter than MIN_PARAGRAPH_LENGTH
-    are discarded.
+    Splits on double newlines (or more). In addition, normalizes single newlines
+    preceding standard section headers (e.g. 'Aim:', 'Observations:', etc.) so that
+    PDF and document extractions without double blank lines are properly segmented.
 
     Args:
         text: Raw text content.
@@ -96,14 +97,21 @@ def split_into_paragraphs(text: str) -> list[Paragraph]:
     Returns:
         List of Paragraph objects with index positions.
     """
-    # Split on one or more blank lines
-    raw_paragraphs = text.split("\n\n")
+    if not text:
+        return []
+
+    # Normalize section headers that start on a new line (e.g. "\nAim:", "\nTheory:", "\nObservations:")
+    # so they form separate paragraphs even if extracted with single newlines
+    normalized = re.sub(r"\n(?=[A-Z][A-Za-z0-9\s/\\-]{1,30}:)", r"\n\n", text)
+
+    raw_paragraphs = re.split(r"\n\s*\n", normalized)
     paragraphs: list[Paragraph] = []
     idx = 0
 
     for raw in raw_paragraphs:
         # Collapse internal whitespace but preserve structure
         cleaned = " ".join(raw.split())
+        # Filter out metadata lines like "Student: Name" or single short titles
         if len(cleaned) >= MIN_PARAGRAPH_LENGTH:
             paragraphs.append(Paragraph(text=cleaned, index=idx))
             idx += 1
@@ -180,7 +188,12 @@ def parse_files(file_paths: list[tuple[str, str]]) -> list[StudentSubmission]:
     """
     submissions: list[StudentSubmission] = []
 
-    for path, filename in file_paths:
+    for item in file_paths:
+        if isinstance(item, (tuple, list)):
+            path, filename = item[0], item[1]
+        else:
+            path = str(item)
+            filename = os.path.basename(path)
         ext = Path(filename).suffix.lower()
         if ext not in SUPPORTED_EXTENSIONS:
             logger.info("Skipping unsupported file: '%s'", filename)
