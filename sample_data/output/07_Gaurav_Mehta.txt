@@ -1,0 +1,11 @@
+Aim: To verify Ohm's law by establishing the relationship between the potential difference across a given metallic conductor and the electric current flowing through it, and to determine the unknown resistance of the resistor by plotting a V-I graph.
+
+Apparatus Required: A DC regulated power supply (0-15V), a digital DC voltmeter (0-20V), a digital DC ammeter (0-500mA), an unknown wire-wound resistor, a variable rheostat (0-100 ohms), a one-way plug key, and insulated connecting copper wires.
+
+Procedure: Clean the ends of the connecting wires using sandpaper and assemble the circuit as per the circuit schematic. Connect the voltmeter in parallel across the resistor specimen and the ammeter in series with the battery and rheostat. Close the circuit key and adjust the rheostat slider to record initial values of voltage V and current I. Increase the potential systematically in regular increments, taking simultaneous readings on both meters at each step. Plot a graph with potential difference on the y-axis and current on the x-axis to calculate the slope representing resistance.
+
+Observations: For applied voltages between 3V and 9V in increments of 1.5V, the current meter read 0.031A, 0.045A, 0.060A, 0.076A, and 0.090A respectively.
+
+Calculations: The slope of the line of best fit gives the experimental resistance: R = (V2 - V1) / (I2 - I1) = (9.0 - 3.0) / (0.090 - 0.030) = 6.0 / 0.060 = 100.0 ohms. The standard deviation across repeated trial runs was 0.15 ohms.
+
+Conclusion: Ohm's Law is substantiated because the graph of potential difference against electric current forms a straight line crossing the origin. The resistance of the wire specimen was found to be exactly 100.0 ohms.

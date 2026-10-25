@@ -1,0 +1,11 @@
+Aim: To verify Ohm's law by establishing the relationship between the potential difference across a given metallic conductor and the electric current flowing through it, and to determine the unknown resistance of the resistor by plotting a V-I graph.
+
+Apparatus Required: A DC regulated power supply (0-15V), a digital DC voltmeter (0-20V), a digital DC ammeter (0-500mA), an unknown wire-wound resistor, a variable rheostat (0-100 ohms), a one-way plug key, and insulated connecting copper wires.
+
+Procedure: Clean the ends of the connecting wires using sandpaper and assemble the circuit as per the circuit schematic. Connect the voltmeter in parallel across the resistor specimen and the ammeter in series with the battery and rheostat. Close the circuit key and adjust the rheostat slider to record initial values of voltage V and current I. Increase the potential systematically in regular increments, taking simultaneous readings on both meters at each step. Plot a graph with potential difference on the y-axis and current on the x-axis to calculate the slope representing resistance.
+
+Observations: Constantan wire coil tested with voltage range 1V to 6V in 1V increments. Currents recorded: 0.030A, 0.061A, 0.091A, 0.122A, 0.151A, 0.182A.
+
+Calculations: Plotting V on y-axis and I on x-axis gave line gradient = 32.96 ohms. Temperature remained steady throughout.
+
+Conclusion: The constantan wire specimen obeys Ohm's law with an empirical resistance of 33.0 ohms.

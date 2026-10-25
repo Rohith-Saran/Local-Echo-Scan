@@ -111,7 +111,12 @@ def cosine_similarity_matrix(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     Returns:
         Similarity matrix of shape (m, n).
     """
-    return a @ b.T
+    if a.size == 0 or b.size == 0:
+        return np.zeros((a.shape[0], b.shape[0]), dtype=np.float32)
+    a_mat = np.asarray(a, dtype=np.float32)
+    b_mat = np.asarray(b, dtype=np.float32)
+    sim = a_mat @ b_mat.T
+    return np.clip(sim, -1.0, 1.0)
 
 
 def detect_boilerplate(
