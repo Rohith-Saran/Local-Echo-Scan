@@ -126,9 +126,50 @@ function App() {
     return 'normal';
   };
 
-  // Simple text highlight function for matched passages in modal
-  const renderHighlightedPassage = (text) => {
-    return <div className="passage-text">{text}</div>;
+  // Intelligent matching sentence/phrase highlighter for side-by-side view
+  const renderHighlightedPassage = (targetText, referenceText) => {
+    if (!targetText) return null;
+    if (!referenceText) return <div className="passage-text">{targetText}</div>;
+
+    // Split target into sentences/clauses, preserving punctuation and spacing
+    const segments = targetText.match(/[^.!?]+(?:[.!?]+|\s*$)/g) || [targetText];
+
+    const refNorm = referenceText.toLowerCase();
+    const refWords = new Set(
+      refNorm.replace(/[^\w\s]/g, '').split(/\s+/).filter((w) => w.length > 2)
+    );
+
+    const elements = segments.map((seg, idx) => {
+      const trimmed = seg.trim();
+      if (!trimmed) return <span key={idx}>{seg}</span>;
+
+      const segNorm = trimmed.toLowerCase();
+      // 1. Direct substring match of clause or sentence
+      let isMatch = refNorm.includes(segNorm);
+
+      // 2. High semantic overlap (>= 40% of substantive words in clause match reference)
+      if (!isMatch) {
+        const segWords = segNorm.replace(/[^\w\s]/g, '').split(/\s+/).filter((w) => w.length > 2);
+        if (segWords.length > 0) {
+          const overlap = segWords.filter((w) => refWords.has(w)).length;
+          const ratio = overlap / segWords.length;
+          if (ratio >= 0.40 && overlap >= 3) {
+            isMatch = true;
+          }
+        }
+      }
+
+      if (isMatch) {
+        return (
+          <mark key={idx} className="highlight-match">
+            {seg}
+          </mark>
+        );
+      }
+      return <span key={idx}>{seg}</span>;
+    });
+
+    return <div className="passage-text">{elements}</div>;
   };
 
   return (
@@ -150,7 +191,7 @@ function App() {
         </div>
         <div className="privacy-badge">
           <span className="pulse-dot"></span>
-          100% Local • Zero Cloud • Air-Gapped
+          100% Local Processing
         </div>
       </header>
 
@@ -581,11 +622,11 @@ function App() {
                   <div className="side-by-side-grid">
                     <div className="passage-column">
                       <div className="passage-student-tag">{selectedPair.student_a}</div>
-                      {renderHighlightedPassage(match.text_a)}
+                      {renderHighlightedPassage(match.text_a, match.text_b)}
                     </div>
                     <div className="passage-column" style={{ borderLeft: '1px solid var(--border-subtle)' }}>
                       <div className="passage-student-tag">{selectedPair.student_b}</div>
-                      {renderHighlightedPassage(match.text_b)}
+                      {renderHighlightedPassage(match.text_b, match.text_a)}
                     </div>
                   </div>
                 </div>
