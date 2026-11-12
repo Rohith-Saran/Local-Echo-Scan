@@ -246,6 +246,5 @@ python3 backend/tests/test_rings.py
 | **Frontend** | [React](https://react.dev/) & [Vite](https://vitejs.dev/) | Reactive dashboard |
 | **3D Graphics** | [Three.js](https://threejs.org/) | WebGL spatial holographic submission radar |
 
-## License
 
-This project is licensed under the [MIT License](LICENSE).
+<h3 align="center">Done By Rohith Saran 🤍 </h3>
